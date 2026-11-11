@@ -1,15 +1,19 @@
 
 from enum import Enum
+from enums import CellState, Direction
 from movement_handler import MovementHandler
 from snake import Snake
-
+from score_manager import ScoreManager
+import random
 
 class Environment:
 
-    def __init__(self, dimensions: tuple = (20, 20), snake_start_position = [(10, 10), (10, 9), (10, 8), (10, 7), (10, 6), (10, 5), (10, 4), (10, 3), (10, 2), (10, 1), (10, 0)]):
-        self.snake = Snake(snake_start_position)
-        self.movement_handler = MovementHandler(self)
+    def __init__(self, dimensions: tuple = (20, 20), snake_start_position = [(10, 10)]):
+        self.snake = Snake(snake_start_position) 
+        self.movement_handler = MovementHandler()
+        self.score_manager = ScoreManager()
         self.dimension = dimensions
+        self.is_alive = True
         self.game_area = [[CellState.EMPTY for _ in range(self.dimension[0])] for _ in range(self.dimension[1])]
         self.fruits_locations = []
         for position in self.snake.get_body_parts():
@@ -21,8 +25,11 @@ class Environment:
             self.game_area[position[0]][position[1]] = CellState.FOOD
         return self.game_area[position[0]][position[1]] == CellState.FOOD
 
-    def random_food_spawn(self, number_of_food: int = 1):
-        import random
+    def random_food_spawn(self):
+        if self.fruits_locations:
+            return # Non generare nuovo cibo se ce n'è già uno presente`
+        
+        number_of_food = random.choices([1, 2, 3], weights=[0.70, 0.20, 0.10])[0]
         for _ in range(number_of_food):
             while True:
                 position = (random.randint(0, self.dimension[0] - 1), random.randint(0, self.dimension[1] - 1))
@@ -45,20 +52,25 @@ class Environment:
             self.game_area[position[0]][position[1]] = CellState.FOOD
 
     def move_snake(self, direction):
-        self.movement_handler.handle_movement(direction)
+        next_head_position = self.movement_handler.get_next_position(direction, snake_head_position=self.snake.get_head())
+        if not self.is_valid_move(next_head_position):
+            print ("Game Over! Collision detected.")
+            self.is_alive = False
+            return
+        is_eating_food = next_head_position in self.fruits_locations
+        self.snake.move(next_head_position, grow=is_eating_food)
+        if is_eating_food:
+            self.eat_food_if_present(next_head_position)
         self.update_game_area()
 
-    def is_valid_move(self, new_head_position: tuple):
+    def is_valid_move(self, next_head_position: tuple):
  
-        if self.is_out_of_bounds(new_head_position):
-            print(f"Invalid move to {new_head_position}: false")
+        if self.is_out_of_bounds(next_head_position):
             return False
     
-        if self.is_colliding_with_self(new_head_position):
-            print(f"Invalid move to {new_head_position}: true")
+        if self.is_colliding_with_self(next_head_position):
             return False
         
-        print(f"Valid move to {new_head_position}: true")
         return True
 
     def is_out_of_bounds(self, new_head_position: tuple) -> bool:
@@ -72,19 +84,17 @@ class Environment:
         # Controlla se la nuova posizione della testa collide con il corpo del serpente
         return new_head_position in self.snake.get_body_parts()
 
-    def eat_food_if_present(self):
-        head_position = self.snake.get_head()
-        if head_position in self.fruits_locations:
-            self.fruits_locations.remove(head_position)
-            self.snake.add_body_part(head_position)  # Aggiungi una nuova parte del corpo alla testa
-            self.random_food_spawn()  # Genera un nuovo cibo in una posizione casuale
-            return True
-        return False
-    
+    def eat_food_if_present(self, new_head_position: tuple):
+        self.score_manager.increase_score(1)  # Incrementa il punteggio di 1
+        self.fruits_locations.remove(new_head_position)
+        self.random_food_spawn()  # Genera un nuovo cibo in una posizione casuale
 
-
-class CellState(Enum):
-    EMPTY = 0
-    SNAKE = 1
-    FOOD = 2
-
+    def reset_environment(self):
+        self.snake = Snake([(10, 10)])  # Reset del serpente alla posizione iniziale
+        self.score_manager.reset_score()  # Reset del punteggio
+        self.game_area = [[CellState.EMPTY for _ in range(self.dimension[0])] for _ in range(self.dimension[1])]
+        self.fruits_locations = []
+        self.previous_score = 0  # Reset del punteggio precedente
+        self.previous_direction = None  # Reset della direzione precedente
+        self.random_food_spawn()  # Genera un nuovo cibo in una posizione casuale
+        self.is_alive = True  # Reset dello stato di vita del serpente
