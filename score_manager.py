@@ -1,12 +1,20 @@
 class ScoreManager:
+    """
+    Manages tracking, increasing, and resetting the game score.
+    """
+
     def __init__(self):
-        self.score = 0
+        self._score = 0
 
-    def increase_score(self, points: int):
-        self.score += points
+    @property
+    def score(self) -> int:
+        """Returns the current score in read-only mode."""
+        return self._score
 
-    def get_score(self) -> int:
-        return self.score
+    def increase(self, points: int = 1):
+        """Increases the current score by the given amount."""
+        self._score += points
 
-    def reset_score(self):
-        self.score = 0
+    def reset(self):
+        """Resets the score back to zero."""
+        self._score = 0

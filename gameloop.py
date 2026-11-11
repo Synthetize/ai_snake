@@ -2,133 +2,179 @@ import pygame
 from environment import Environment
 from enums import Direction, CellState
 
-class GameLoop:
 
-    previous_direction = None
-    current_direction = None
+class GameLoop:
+    """
+    Game loop controller for human play:
+    handles keyboard inputs, ticks the environment,
+    renders frames via Pygame, and manages adaptive game speed.
+    """
 
     def __init__(self, cell_size: int = 20):
-        self.speed = 4  # Velocità del gioco (frame per secondo)
         self.environment = Environment()
-        self.dimensions = self.environment.get_area_dimensions()
+        self.num_rows, self.num_cols = self.environment.dimensions
         self.cell_size = cell_size
-        self.previous_direction = Direction.RIGHT  # Direzione iniziale del serpente
-        self.current_direction = Direction.RIGHT  # Direzione iniziale del serpente
-        self.previous_score = 0
-        
+        self.previous_direction = Direction.RIGHT
+        self.current_direction = Direction.RIGHT
+
+        # ---------------------------------------------------------------------
+        # Pygame Initialization
+        # ---------------------------------------------------------------------
         pygame.init()
-        self.screen = pygame.display.set_mode((self.dimensions[0] * self.cell_size, self.dimensions[1] * self.cell_size))
+        screen_width = self.num_cols * self.cell_size
+        screen_height = self.num_rows * self.cell_size
+        self.screen = pygame.display.set_mode((screen_width, screen_height))
+        pygame.display.set_caption("Snake AI - Human Mode")
         self.clock = pygame.time.Clock()
 
         pygame.font.init()
         self.font = pygame.font.SysFont('Arial', 24)
 
         self.running = True
-    
+
+    # -------------------------------------------------------------------------
+    # Main Game Loop
+    # -------------------------------------------------------------------------
+
     def run(self):
+        """Continuous execution loop: Events -> Update -> Draw -> Tick."""
         while self.running:
             self._check_game_over()
             self._handle_events()
             self._update()
-            self._draw(self.environment.get_game_area())
-            self.check_for_speed_increase()
+            self._draw(self.environment.game_area)
 
-            self.clock.tick(self.speed)  # Limit to 60 frames per second
+            # Dynamic difficulty: speed scales up with score (capped at 20 FPS)
+            current_score = self.environment.score
+            speed = min(20.0, 4.0 + current_score * 0.2)
+            self.clock.tick(int(speed))
+
+        pygame.quit()
+
+    # -------------------------------------------------------------------------
+    # Event and Input Handling
+    # -------------------------------------------------------------------------
 
     def _handle_events(self):
+        """Processes keyboard inputs and window termination events."""
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 self.running = False
 
-            if event.type == pygame.KEYDOWN:
+            elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_w:
                     self.current_direction = Direction.UP
-                if event.key == pygame.K_s:
+                elif event.key == pygame.K_s:
                     self.current_direction = Direction.DOWN
-                if event.key == pygame.K_a:
+                elif event.key == pygame.K_a:
                     self.current_direction = Direction.LEFT
-                if event.key == pygame.K_d:
+                elif event.key == pygame.K_d:
                     self.current_direction = Direction.RIGHT
 
-    def _draw(self, matrix):
-        self.screen.fill((0, 0, 0))  # sfondo nero
-        self._draw_grid()
-        for row in range(self.dimensions[1]):
-            for col in range(self.dimensions[0]):
-                cell = matrix[row][col]
-                if cell == CellState.SNAKE:
-                    color = (0, 255, 0)    # verde
-                elif cell == CellState.FOOD:
-                    color = (255, 0, 0)    # rosso
-                else:
-                    continue               # cella vuota, non disegnare nulla
-                # converti coordinate griglia → pixel
-                x = col * self.cell_size
-                y = row * self.cell_size
-                pygame.draw.rect(self.screen, color, (x, y, self.cell_size, self.cell_size))
-                self._draw_score() 
-        pygame.display.flip()
+    def _restart_game(self):
+        """Resets the game state and environment for a new session."""
+        self.environment.reset_environment()
+        self.current_direction = Direction.RIGHT
+        self.previous_direction = Direction.RIGHT
 
-    def _draw_score(self):
-            score_surface = self.font.render(f"Score: {self.environment.score_manager.get_score()}", True, (255, 255, 255))  # bianco
-            self.screen.blit(score_surface, (10, 10))  # disegna in alto
-
-    def _draw_grid(self):
-        color = (40, 40, 40)  # grigio scuro, quasi invisibile
-    
-        # Linee verticali
-        for col in range(self.dimensions[0] + 1):
-            x = col * self.cell_size
-            pygame.draw.line(self.screen, color, (x, 0), (x, self.dimensions[1] * self.cell_size))
-
-        # Linee orizzontali
-        for row in range(self.dimensions[1] + 1):
-            y = row * self.cell_size
-            pygame.draw.line(self.screen, color, (0, y), (self.dimensions[0] * self.cell_size, y))
-
-    def _draw_game_over(self):
-        game_over_surface = self.font.render("Game Over!", True, (255, 0, 0))  # rosso
-        score_surface = self.font.render(f"Final Score: {self.environment.score_manager.get_score()}", True, (255, 255, 255))  # bianco
-        self.screen.blit(game_over_surface, (self.dimensions[0] * self.cell_size // 2 - game_over_surface.get_width() // 2,
-                                              self.dimensions[1] * self.cell_size // 2 - game_over_surface.get_height()))
-        self.screen.blit(score_surface, (self.dimensions[0] * self.cell_size // 2 - score_surface.get_width() // 2,
-                                          self.dimensions[1] * self.cell_size // 2 + score_surface.get_height()))
-        pygame.display.flip()
-
-    def _undraw_game_over(self):
-        self.screen.fill((0, 0, 0))  # sfondo nero
-        self._draw_grid()
-        pygame.display.flip()
+    # -------------------------------------------------------------------------
+    # Game Logic Update
+    # -------------------------------------------------------------------------
 
     def _update(self):
-        if (self.current_direction is Direction.UP and self.previous_direction is Direction.DOWN) or (self.current_direction is Direction.DOWN and self.previous_direction is Direction.UP):
-            self.current_direction = self.previous_direction  # Mantieni la direzione precedente
-            self.environment.move_snake(self.current_direction)  # Muovi il serpente nella direzione precedente
-            return  # Non fare nulla se la direzione è la stessa o opposta
+        """Checks game over status, prevents 180-degree instant turns, and advances the snake."""
+        if not self.environment.is_alive:
+            # Reset environment when snake dies
+            self.environment.reset_environment()
+            self.current_direction = Direction.RIGHT
+            self.previous_direction = Direction.RIGHT
+            return
 
-        
-        elif (self.current_direction is Direction.LEFT and self.previous_direction is Direction.RIGHT) or (self.current_direction is Direction.RIGHT and self.previous_direction is Direction.LEFT):
-            self.current_direction = self.previous_direction  # Mantieni la direzione precedente
-            self.environment.move_snake(self.current_direction)  # Muovi il serpente nella dire
-            return  # Non fare nulla se la direzione è la stessa o opposta
+        # Prevent 180-degree immediate reversal into own neck
+        is_vertical_reverse = (
+            (self.current_direction is Direction.UP and self.previous_direction is Direction.DOWN) or
+            (self.current_direction is Direction.DOWN and self.previous_direction is Direction.UP)
+        )
+        is_horizontal_reverse = (
+            (self.current_direction is Direction.LEFT and self.previous_direction is Direction.RIGHT) or
+            (self.current_direction is Direction.RIGHT and self.previous_direction is Direction.LEFT)
+        )
 
+        if is_vertical_reverse or is_horizontal_reverse:
+            self.current_direction = self.previous_direction
 
         self.environment.move_snake(self.current_direction)
         self.previous_direction = self.current_direction
 
-    def check_for_speed_increase(self):
-        if self.previous_score < self.environment.score_manager.get_score():
-            print(f"Increasing speed")
-            self.previous_score = self.environment.score_manager.get_score()
-            self.speed = min(15, self.speed + 0.2)  # Incrementa la velocità, ma non oltre 10
-
     def _check_game_over(self):
+        """If the snake is dead, display a game over message and wait for a key press."""
         if not self.environment.is_alive:
             self._draw_game_over()
-            wait_time = 3000  # Tempo di attesa in millisecondi (3 secondi)
-            pygame.time.wait(wait_time)
-            self._undraw_game_over()
-            self.speed = 4  # Reset della velocità
-            self.previous_score = 0  # Reset del punteggio precedente
-            self.previous_direction = None  # Reset della direzione precedente
-            self.environment.reset_environment()
+            #wait 3 seconds before resetting
+            pygame.time.delay(3000)
+            self._restart_game()
+            
+
+    # -------------------------------------------------------------------------
+    # Graphical Rendering
+    # -------------------------------------------------------------------------
+
+    def _draw(self, matrix: list[list[CellState]]):
+        """Draws the entire frame: background, grid lines, cells, and UI score."""
+        self.screen.fill((0, 0, 0))
+        self._draw_grid()
+
+        for row in range(self.num_rows):
+            for col in range(self.num_cols):
+                cell = matrix[row][col]
+                if cell == CellState.SNAKE:
+                    color = (0, 255, 0)
+                elif cell == CellState.FOOD:
+                    color = (255, 0, 0)
+                else:
+                    continue
+
+                pixel_x = col * self.cell_size
+                pixel_y = row * self.cell_size
+                pygame.draw.rect(self.screen, color, (pixel_x, pixel_y, self.cell_size, self.cell_size))
+
+        self._draw_score()
+        pygame.display.flip()
+
+    def _draw_score(self):
+        """Renders the score text in the top-left corner."""
+        score = self.environment.score
+        score_surface = self.font.render(f"Score: {score}", True, (255, 255, 255))
+        self.screen.blit(score_surface, (10, 10))
+
+    def _draw_grid(self):
+        """Draws subtle divider grid lines on the screen."""
+        color = (40, 40, 40)
+
+        # Vertical lines
+        for col in range(self.num_cols + 1):
+            pixel_x = col * self.cell_size
+            pygame.draw.line(self.screen, color, (pixel_x, 0), (pixel_x, self.num_rows * self.cell_size))
+
+        # Horizontal lines
+        for row in range(self.num_rows + 1):
+            pixel_y = row * self.cell_size
+            pygame.draw.line(self.screen, color, (0, pixel_y), (self.num_cols * self.cell_size, pixel_y))
+
+    def _draw_game_over(self):
+        """Displays a game over message in the center of the screen."""
+        overlay = pygame.Surface(self.screen.get_size(), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 180))  # Semi-transparent black overlay
+        self.screen.blit(overlay, (0, 0))
+
+        game_over_surface = self.font.render("Game Over!", True, (255, 0, 0))
+        score_surface = self.font.render(f"Final Score: {self.environment.score}", True, (255, 255, 255))
+
+        # Center the text
+        game_over_rect = game_over_surface.get_rect(center=(self.screen.get_width() // 2, self.screen.get_height() // 2 - 20))
+        score_rect = score_surface.get_rect(center=(self.screen.get_width() // 2, self.screen.get_height() // 2 + 20))
+
+        self.screen.blit(game_over_surface, game_over_rect)
+        self.screen.blit(score_surface, score_rect)
+        pygame.display.flip()
+       
