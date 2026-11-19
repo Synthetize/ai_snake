@@ -30,13 +30,14 @@ class Environment:
         self.score_manager.reset()
         self.game_area = [[CellState.EMPTY for _ in range(self.cols)] for _ in range(self.rows)]
         self.fruits_locations = []
-
+        self.direction = Direction.RIGHT
         # Place initial snake body onto the grid
         for row, col in self.snake.body_parts:
             self.game_area[row][col] = CellState.SNAKE
 
         self.random_food_spawn()
         self.is_alive = True
+        self.steps_without_food = 0 
 
     # -------------------------------------------------------------------------
     # Public Properties
@@ -71,6 +72,7 @@ class Environment:
         if is_eating_food:
             self._eat_food(next_head)
 
+        self.direction = direction
         self._update_game_area(new_head=next_head, old_tail=old_tail, grow=is_eating_food)
 
     # -------------------------------------------------------------------------
@@ -96,8 +98,8 @@ class Environment:
         """
         Checks if the next head position collides with the snake's body.
         """
-        body = self.snake.body_parts
-        return next_head in body
+        row, col = next_head
+        return self.game_area[row][col] == CellState.SNAKE
 
     # -------------------------------------------------------------------------
     # Food Management
@@ -148,3 +150,126 @@ class Environment:
         if old_tail and not grow:
             tail_row, tail_col = old_tail
             self.game_area[tail_row][tail_col] = CellState.EMPTY
+
+
+
+    # -------------------------------------------------------------------------
+
+
+
+    def get_state(self) -> list[int]:
+        clock_wise_directions = [Direction.UP, Direction.RIGHT, Direction.DOWN, Direction.LEFT]
+        direction_idx = clock_wise_directions.index(self.direction)
+
+        head_row, head_col = self.snake.head
+
+  
+        dir_straight = clock_wise_directions[direction_idx]
+        dir_left = clock_wise_directions[(direction_idx - 1) % 4]
+        dir_right = clock_wise_directions[(direction_idx + 1) % 4]
+
+        #next move points based on current direction
+        point_straight = self.movement_handler.get_next_position(dir_straight, (head_row, head_col))
+        point_left = self.movement_handler.get_next_position(dir_left, (head_row, head_col))
+        point_right = self.movement_handler.get_next_position(dir_right, (head_row, head_col))
+
+        straight_danger = not self.is_valid_move(point_straight)
+        left_danger = not self.is_valid_move(point_left)
+        right_danger = not self.is_valid_move(point_right)
+
+        nearest_food = self.get_nearest_food()
+        food_row, food_col = nearest_food if nearest_food else (head_row, head_col)  # Default to head position if no food
+
+        # Dynamic reachable space: the tail frees up as the snake moves.
+        # Normalized by the number of currently free cells -> value in [0, 1].
+        body = self.snake.body_length
+        release_times = self.movement_handler.build_release_times(body, self.rows, self.cols)
+        free_cells = max(1, self.rows * self.cols - len(body))
+
+        def space(point):
+            reachable = self.movement_handler.count_reachable_space(point, self.rows, self.cols, release_times)
+            return min(1.0, reachable / free_cells)
+
+        right_space = space(point_right)
+        left__space = space(point_left)
+        straight_space = space(point_straight)
+
+        return  [
+            int(straight_danger),
+            int(right_danger),
+            int(left_danger),
+
+            int(self.direction == Direction.UP),
+            int(self.direction == Direction.RIGHT),
+            int(self.direction == Direction.DOWN),
+            int(self.direction == Direction.LEFT),
+
+            int(food_row < head_row),  # food up
+            int(food_row > head_row),  # food down
+            int(food_col < head_col),  # food left
+            int(food_col > head_col),  # food right
+
+            float(straight_space),  # reachable space straight ahead
+            float(right_space),  # reachable space to the right
+            float(left__space),  # reachable space to the left
+        ]  
+
+    def get_nearest_food(self):
+        """Returns the coordinates of the nearest fruit to the snake's head."""
+        head_row, head_col = self.snake.head
+        return  min(self.fruits_locations, key=lambda f: abs(f[0] - head_row) + abs(f[1] - head_col))
+
+    def step(self, action: list[float]):
+        clock_wise = [Direction.UP, Direction.RIGHT, Direction.DOWN, Direction.LEFT]
+        idx = clock_wise.index(self.direction)
+        if action == [1, 0, 0]:  # straight
+            new_dir = clock_wise[idx]
+        elif action == [0, 1, 0]:  # right turn
+            new_dir = clock_wise[(idx + 1) % 4]
+        else:  # left turn
+            new_dir = clock_wise[(idx - 1) % 4]
+
+        old_score = self.score
+
+        reward_by_distance = self.reward_for_distance_change(new_dir)
+
+        self.move_snake(new_dir)
+
+        max_allowed_steps = 100 * len(self.snake.body_length)  # Allow more steps as the snake grows
+
+        if not self.is_alive:
+            reward = -10
+            done = True
+        elif self.score > old_score:
+            reward = 10
+            done = False
+            self.steps_without_food = 0  # Reset the counter when food is eaten
+        else:
+            if self.steps_without_food > max_allowed_steps:  # If the snake hasn't eaten food for 100 steps, end the game
+                reward = -10
+                done = True
+            else:
+                reward = reward_by_distance
+                self.steps_without_food += 1
+                done = False
+
+        return self.get_state(), reward, done, self.score
+
+    def get_distance_to_nearest_food(self, head_position: tuple[int, int]) -> int:
+        """Calculates the Manhattan distance from the snake's head to the nearest fruit."""
+        nearest_food = self.get_nearest_food()
+        if nearest_food:
+            head_row, head_col = head_position
+            food_row, food_col = nearest_food
+            return abs(food_row - head_row) + abs(food_col - head_col)
+        return 0  # No food available
+
+    def reward_for_distance_change(self, new_dir: Direction) -> float:
+        old_distance = self.get_distance_to_nearest_food(self.snake.head)
+        new_distance = self.get_distance_to_nearest_food(self.movement_handler.get_next_position(new_dir, self.snake.head))
+        if new_distance < old_distance:
+            return 0.1  # Reward for moving closer to food
+        elif new_distance > old_distance:
+            return -0.15  # Penalty for moving away from food 
+        else:
+            return -0.05  # No change in distance
